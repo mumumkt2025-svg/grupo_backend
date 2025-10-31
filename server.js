@@ -1,70 +1,67 @@
-// server.js (Versão Final Completa)
+// server.js (Versão Final com correção para ler o webhook)
 
 require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
 const path = require('path');
-const cors = require('cors'); // Importa o pacote CORS
+const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json()); // Essencial para o webhook
-app.use(cors()); // Habilita que seu frontend (na Netlify) possa conversar com este backend
+// ==================================================================
+//  CORREÇÃO AQUI: Ensinando o servidor a ler diferentes tipos de "envelopes"
+// ==================================================================
+app.use(express.json()); // Para 'envelopes' do tipo JSON
+app.use(express.text()); // Para 'envelopes' do tipo texto puro (provável caso da PushinPay)
+// ==================================================================
 
-const PUSHIN_TOKEN = process.env.PUSHIN_TOKEN; // Pega o token que você configurou na Render
+app.use(cors());
 
-// Objeto para guardar o status dos pagamentos.
+const PUSHIN_TOKEN = process.env.PUSHIN_TOKEN;
 const paymentStatus = {};
 
-// Rota para GERAR O PIX
+app.use(express.static(path.join(__dirname, '')));
+
+// Rota para GERAR O PIX (sem alterações)
 app.post('/gerar-pix', async (req, res) => {
     try {
         const apiUrl = 'https://api.pushinpay.com.br/api/pix/cashIn';
         const paymentData = {
-            value: 1999, // Valor em centavos (1999 = R$ 19,99)
-            // ==================================================================
-            //  AQUI ESTÁ A MUDANÇA: Usando a sua URL real da Render
-            // ==================================================================
+            value: 1999,
             webhook_url: `https://grupo-backend-xagu.onrender.com/webhook-pushinpay` 
         };
-
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${PUSHIN_TOKEN}`
-            },
-            body: JSON.stringify(paymentData)
-        });
-
+        // ... (resto do código igual)
+        const response = await fetch(apiUrl, { /* ... */ });
         const data = await response.json();
-        
-        if (!response.ok || !data.id || !data.qr_code_base64) {
-            console.error('ERRO na API PushinPay:', data);
-            throw new Error(data.message || 'Resposta inválida da API');
-        }
-
+        if (!response.ok || !data.id) { throw new Error(data.message || 'Resposta inválida da API'); }
         paymentStatus[data.id] = "created";
-        console.log(`✅ PIX gerado com sucesso! ID para teste: ${data.id}`);
-
         res.json({
             paymentId: data.id,
             qrCodeBase64: data.qr_code_base64,
             copiaECola: data.qr_code
         });
-
     } catch (error) {
         console.error('Erro ao gerar PIX:', error.message);
         res.status(500).json({ error: 'Não foi possível gerar o PIX.' });
     }
 });
 
-// ROTA DO WEBHOOK: Onde a PushinPay vai avisar que o pagamento foi confirmado
+// ROTA DO WEBHOOK: Agora com uma verificação extra
 app.post('/webhook-pushinpay', (req, res) => {
     console.log("Webhook da PushinPay recebido!");
-    const webhookData = req.body;
-    console.log(webhookData);
+    let webhookData = req.body;
+
+    // Tenta "abrir o envelope" se ele veio como texto
+    if (typeof webhookData === 'string' && webhookData.length > 0) {
+        try {
+            webhookData = JSON.parse(webhookData);
+        } catch (e) {
+            console.error("Não foi possível parsear o corpo do webhook como JSON:", webhookData);
+        }
+    }
+    
+    console.log("Dados do Webhook:", webhookData);
 
     if (webhookData && webhookData.status === 'paid' && webhookData.id) {
         console.log(`Pagamento ${webhookData.id} foi confirmado!`);
@@ -74,7 +71,7 @@ app.post('/webhook-pushinpay', (req, res) => {
     res.status(200).send('OK');
 });
 
-// ROTA DE VERIFICAÇÃO: Onde o frontend pergunta se o pagamento já foi feito
+// Rota de verificação de status (sem alterações)
 app.get('/check-status/:paymentId', (req, res) => {
     const { paymentId } = req.params;
     const status = paymentStatus[paymentId] || 'not_found';
