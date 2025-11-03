@@ -1,34 +1,32 @@
-// server.js (Versão Final com correção para ler o webhook)
+// server.js (Versão Final com TODOS os parsers de body)
 
 require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
 const path = require('path');
-const cors = require('cors');
+const cors = require('cors'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ==================================================================
-//  CORREÇÃO AQUI: Ensinando o servidor a ler diferentes tipos de "envelopes"
+//  CORREÇÃO AQUI: Adicionando o último parser que faltava
 // ==================================================================
-app.use(express.json()); // Para 'envelopes' do tipo JSON
-app.use(express.text()); // Para 'envelopes' do tipo texto puro (provável caso da PushinPay)
+app.use(express.json()); // Lê "cartas" do tipo JSON
+app.use(express.text()); // Lê "cartas" do tipo Texto Puro
+app.use(express.urlencoded({ extended: true })); // Lê "cartas" do tipo formulário (MUITO COMUM)
 // ==================================================================
 
-app.use(cors());
+app.use(cors()); 
 
 const PUSHIN_TOKEN = process.env.PUSHIN_TOKEN;
 const paymentStatus = {};
 
-// Rota para GERAR O PIX (sem alterações)
+// Rota para GERAR O PIX (Funcional)
 app.post('/gerar-pix', async (req, res) => {
     try {
         const apiUrl = 'https://api.pushinpay.com.br/api/pix/cashIn';
-        const paymentData = {
-            value: 1999,
-            webhook_url: `https://grupo-backend-xagu.onrender.com/webhook-pushinpay` 
-        };
+        const paymentData = { value: 1999 };
 
         const response = await fetch(apiUrl, {
             method: 'POST',
@@ -61,31 +59,40 @@ app.post('/gerar-pix', async (req, res) => {
     }
 });
 
-// ROTA DO WEBHOOK: Agora com uma verificação extra
+// ROTA DO WEBHOOK (Onde a PushinPay vai te avisar)
 app.post('/webhook-pushinpay', (req, res) => {
     console.log("Webhook da PushinPay recebido!");
-    let webhookData = req.body;
+    let webhookData = req.body; // Agora o req.body DEVE ter alguma coisa
 
-    // Tenta "abrir o envelope" se ele veio como texto
-    if (typeof webhookData === 'string' && webhookData.length > 0) {
-        try {
-            webhookData = JSON.parse(webhookData);
-        } catch (e) {
-            console.error("Não foi possível parsear o corpo do webhook como JSON:", webhookData);
-        }
+    // Tentativa de parse (caso venha como texto)
+    if (typeof webhookData === 'string') {
+        try { webhookData = JSON.parse(webhookData); } catch (e) { /* ignora */ }
     }
     
-    console.log("Dados do Webhook:", webhookData);
+    console.log("Dados do Webhook:", webhookData); // PRECISAMOS que isso aqui mostre os dados
 
-    if (webhookData && webhookData.status === 'paid' && webhookData.id) {
-        console.log(`Pagamento ${webhookData.id} foi confirmado!`);
-        paymentStatus[webhookData.id] = 'paid';
+    // Lógica para encontrar o ID e Status
+    let paymentId = null;
+    let paymentStatusReceived = null;
+
+    if (webhookData && webhookData.id) { // Se for JSON
+        paymentId = webhookData.id;
+        paymentStatusReceived = webhookData.status;
+    } else if (webhookData && webhookData.data) { // Algumas APIs mandam dentro de um "data"
+        paymentId = webhookData.data.id;
+        paymentStatusReceived = webhookData.data.status;
+    }
+    // Adicione mais "if/else" se o formato for outro
+
+    if (paymentStatusReceived === 'paid' && paymentId) {
+        console.log(`Pagamento ${paymentId} foi confirmado!`);
+        paymentStatus[paymentId] = 'paid';
     }
 
     res.status(200).send('OK');
 });
 
-// Rota de verificação de status (sem alterações)
+// ROTA DE VERIFICAÇÃO DE STATUS
 app.get('/check-status/:paymentId', (req, res) => {
     const { paymentId } = req.params;
     const status = paymentStatus[paymentId] || 'not_found';
