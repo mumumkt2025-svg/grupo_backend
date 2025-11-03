@@ -27,7 +27,7 @@ app.post('/gerar-pix', async (req, res) => {
         const apiUrl = 'https://api.pushinpay.com.br/api/pix/cashIn';
         const paymentData = {
             value: 1999,
-            webhook_url: `https://grupo-backend-xagu.onrender.com/webhook-pushinpay` 
+            webhook_url: `https://webhook.site/e39aae55-cd5c-410d-81b7-71e536d6a5e2` 
         };
 
         const response = await fetch(apiUrl, {
