@@ -18,7 +18,7 @@ const paymentStatus = {};
 app.post('/gerar-pix', express.json(), async (req, res) => { // Adiciona o leitor de JSON só aqui
     try {
         const apiUrl = 'https://api.pushinpay.com.br/api/pix/cashIn';
-        const paymentData = { value: 1999 }; // Não enviamos webhook_url
+        const paymentData = { value: 299 }; // Não enviamos webhook_url
 
         const response = await fetch(apiUrl, {
             method: 'POST',
