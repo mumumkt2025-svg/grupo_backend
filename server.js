@@ -1,4 +1,4 @@
-// server.js (VERSÃO CORRIGIDA)
+// server.js (VERSÃO CORRIGIDA PARA x-www-form-urlencoded)
 
 require('dotenv').config();
 const express = require('express');
@@ -9,14 +9,9 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CONFIGURAÇÃO CORRIGIDA DO MIDDLEWARE
-app.use(express.json({ 
-    limit: '10mb',
-    verify: (req, res, buf) => {
-        req.rawBody = buf; // Guarda o corpo original para debug
-    }
-}));
-app.use(express.text({ type: 'application/json' })); // Fallback para texto
+// CONFIGURAÇÃO CORRIGIDA - Middleware para URL encoded
+app.use(express.urlencoded({ extended: true })); // ← ESTA É A CORREÇÃO PRINCIPAL
+app.use(express.json());
 app.use(cors());
 
 const PUSHIN_TOKEN = process.env.PUSHIN_TOKEN;
@@ -63,46 +58,35 @@ app.post('/gerar-pix', async (req, res) => {
     }
 });
 
-// ROTA DO WEBHOOK - VERSÃO CORRIGIDA
+// ROTA DO WEBHOOK - VERSÃO CORRIGIDA PARA URL ENCODED
 app.post('/webhook-pushinpay', (req, res) => {
     console.log("Webhook da PushinPay recebido!");
-    
-    // DEBUG: Log do cabeçalho para ver o content-type
     console.log("Headers:", req.headers);
     console.log("Content-Type:", req.headers['content-type']);
     
-    let webhookData = req.body;
-
-    // Se for string, tenta fazer parse
-    if (typeof webhookData === 'string') {
-        console.log("Corpo recebido como string:", webhookData);
-        try {
-            webhookData = JSON.parse(webhookData);
-        } catch (e) {
-            console.error("Erro ao fazer parse do JSON:", e.message);
-            console.log("String original:", webhookData);
-        }
-    }
+    // Os dados agora virão em req.body diretamente, pois usamos express.urlencoded()
+    const webhookData = req.body;
     
-    console.log("Dados do Webhook (após parse):", webhookData);
+    console.log("Dados do Webhook:", webhookData);
 
-    // Verificação mais robusta dos dados
     if (webhookData && webhookData.id) {
-        console.log(`Webhook recebido para pagamento: ${webhookData.id}`);
-        console.log(`Status: ${webhookData.status}`);
+        console.log(`🎉 Webhook recebido - ID: ${webhookData.id}, Status: ${webhookData.status}`);
         
         if (webhookData.status === 'paid') {
-            console.log(`🎉 Pagamento ${webhookData.id} foi CONFIRMADO!`);
+            console.log(`💰 Pagamento CONFIRMADO: ${webhookData.id}`);
             paymentStatus[webhookData.id] = 'paid';
         } else {
             console.log(`Status do pagamento ${webhookData.id}: ${webhookData.status}`);
             paymentStatus[webhookData.id] = webhookData.status;
         }
     } else {
-        console.log("Webhook recebido sem dados válidos:", webhookData);
+        console.log("Webhook recebido, mas dados não no formato esperado:", webhookData);
+        
+        // Debug adicional - mostrar todas as chaves do body
+        console.log("Chaves disponíveis no req.body:", Object.keys(webhookData || {}));
     }
 
-    res.status(200).json({ received: true });
+    res.status(200).json({ received: true, message: "Webhook processado" });
 });
 
 // Rota de verificação de status
@@ -112,15 +96,6 @@ app.get('/check-status/:paymentId', (req, res) => {
     res.json({ status: status });
 });
 
-// Rota de health check
-app.get('/', (req, res) => {
-    res.json({ 
-        message: 'Servidor rodando',
-        webhookEndpoint: '/webhook-pushinpay'
-    });
-});
-
 app.listen(PORT, () => {
     console.log(`Servidor rodando na porta ${PORT}`);
-    console.log(`Webhook configurado em: https://grupo-backend-xagu.onrender.com/webhook-pushinpay`);
 });
