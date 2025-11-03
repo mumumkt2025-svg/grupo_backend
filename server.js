@@ -1,4 +1,4 @@
-// server.js (Versão Final com correção para ler o webhook)
+// server.js (Versão com a URL de Webhook CORRETA)
 
 require('dotenv').config();
 const express = require('express');
@@ -9,25 +9,25 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ==================================================================
-//  CORREÇÃO AQUI: Ensinando o servidor a ler diferentes tipos de "envelopes"
-// ==================================================================
-app.use(express.json()); // Para 'envelopes' do tipo JSON
-app.use(express.text()); // Para 'envelopes' do tipo texto puro (provável caso da PushinPay)
-// ==================================================================
-
+app.use(express.json());
+app.use(express.text());
 app.use(cors());
 
 const PUSHIN_TOKEN = process.env.PUSHIN_TOKEN;
 const paymentStatus = {};
 
-// Rota para GERAR O PIX (sem alterações)
+// Rota para GERAR O PIX
 app.post('/gerar-pix', async (req, res) => {
     try {
         const apiUrl = 'https://api.pushinpay.com.br/api/pix/cashIn';
+        
+        // ==========================================================
+        //  A CORREÇÃO ESTÁ AQUI:
+        //  Apontamos o webhook para o SEU backend, não para o webhook.site
+        // ==========================================================
         const paymentData = {
-            value: 299,
-            webhook_url: `https://webhook.site/e39aae55-cd5c-410d-81b7-71e536d6a5e2` 
+            value: 299, // Seu valor de R$ 2,99 em centavos
+            webhook_url: `https://grupo-backend-xagu.onrender.com/webhook-pushinpay` 
         };
 
         const response = await fetch(apiUrl, {
@@ -61,12 +61,11 @@ app.post('/gerar-pix', async (req, res) => {
     }
 });
 
-// ROTA DO WEBHOOK: Agora com uma verificação extra
+// ROTA DO WEBHOOK: Pronta para receber o aviso
 app.post('/webhook-pushinpay', (req, res) => {
     console.log("Webhook da PushinPay recebido!");
     let webhookData = req.body;
 
-    // Tenta "abrir o envelope" se ele veio como texto
     if (typeof webhookData === 'string' && webhookData.length > 0) {
         try {
             webhookData = JSON.parse(webhookData);
@@ -85,7 +84,7 @@ app.post('/webhook-pushinpay', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Rota de verificação de status (sem alterações)
+// Rota de verificação de status
 app.get('/check-status/:paymentId', (req, res) => {
     const { paymentId } = req.params;
     const status = paymentStatus[paymentId] || 'not_found';
