@@ -1,23 +1,22 @@
-// server.js (VERSÃO CORRIGIDA PARA x-www-form-urlencoded)
+// server.js (VERSÃO CORRIGIDA - IDs normalizados)
 
 require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
-const path = require('path');
 const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CONFIGURAÇÃO CORRIGIDA - Middleware para URL encoded
-app.use(express.urlencoded({ extended: true })); // ← ESTA É A CORREÇÃO PRINCIPAL
+// Middleware
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
 const PUSHIN_TOKEN = process.env.PUSHIN_TOKEN;
 const paymentStatus = {};
 
-// Rota para GERAR O PIX (mantida igual)
+// Rota para GERAR PIX
 app.post('/gerar-pix', async (req, res) => {
     try {
         const apiUrl = 'https://api.pushinpay.com.br/api/pix/cashIn';
@@ -43,11 +42,14 @@ app.post('/gerar-pix', async (req, res) => {
             throw new Error(data.message || 'Resposta inválida da API');
         }
 
-        paymentStatus[data.id] = "created";
-        console.log(`✅ PIX gerado com sucesso! ID: ${data.id}`);
+        // Armazena o ID em minúsculas para consistência
+        const normalizedId = data.id.toLowerCase();
+        paymentStatus[normalizedId] = "created";
+        
+        console.log(`✅ PIX gerado com sucesso! ID: ${normalizedId}`);
 
         res.json({
-            paymentId: data.id,
+            paymentId: normalizedId, // Retorna em minúsculas para o frontend
             qrCodeBase64: data.qr_code_base64,
             copiaECola: data.qr_code
         });
@@ -58,44 +60,68 @@ app.post('/gerar-pix', async (req, res) => {
     }
 });
 
-// ROTA DO WEBHOOK - VERSÃO CORRIGIDA PARA URL ENCODED
+// Webhook - VERSÃO CORRIGIDA (IDs normalizados)
 app.post('/webhook-pushinpay', (req, res) => {
     console.log("Webhook da PushinPay recebido!");
-    console.log("Headers:", req.headers);
-    console.log("Content-Type:", req.headers['content-type']);
     
-    // Os dados agora virão em req.body diretamente, pois usamos express.urlencoded()
     const webhookData = req.body;
-    
     console.log("Dados do Webhook:", webhookData);
 
     if (webhookData && webhookData.id) {
-        console.log(`🎉 Webhook recebido - ID: ${webhookData.id}, Status: ${webhookData.status}`);
+        // CORREÇÃO: Normaliza o ID para minúsculas
+        const normalizedId = webhookData.id.toLowerCase();
+        
+        console.log(`🎉 Webhook recebido - ID: ${normalizedId}, Status: ${webhookData.status}`);
         
         if (webhookData.status === 'paid') {
-            console.log(`💰 Pagamento CONFIRMADO: ${webhookData.id}`);
-            paymentStatus[webhookData.id] = 'paid';
+            paymentStatus[normalizedId] = 'paid';
+            console.log(`💰 PAGAMENTO CONFIRMADO: ${normalizedId}`);
+            console.log(`👤 Pagador: ${webhookData.payer_name}`);
+            console.log(`💳 Valor: R$ ${(webhookData.value / 100).toFixed(2)}`);
         } else {
-            console.log(`Status do pagamento ${webhookData.id}: ${webhookData.status}`);
-            paymentStatus[webhookData.id] = webhookData.status;
+            paymentStatus[normalizedId] = webhookData.status;
+            console.log(`Status atualizado: ${normalizedId} -> ${webhookData.status}`);
         }
-    } else {
-        console.log("Webhook recebido, mas dados não no formato esperado:", webhookData);
-        
-        // Debug adicional - mostrar todas as chaves do body
-        console.log("Chaves disponíveis no req.body:", Object.keys(webhookData || {}));
     }
 
-    res.status(200).json({ received: true, message: "Webhook processado" });
+    res.status(200).json({ success: true, message: "Webhook processado" });
 });
 
-// Rota de verificação de status
+// Verificar status do pagamento - VERSÃO CORRIGIDA
 app.get('/check-status/:paymentId', (req, res) => {
-    const { paymentId } = req.params;
+    // CORREÇÃO: Normaliza o ID para minúsculas
+    const paymentId = req.params.paymentId.toLowerCase();
     const status = paymentStatus[paymentId] || 'not_found';
-    res.json({ status: status });
+    
+    res.json({ 
+        paymentId,
+        status: status,
+        message: status === 'paid' ? 'Pagamento confirmado!' : 'Aguardando pagamento'
+    });
+});
+
+// Rota para listar todos os pagamentos (útil para debug)
+app.get('/payments', (req, res) => {
+    res.json({
+        totalPayments: Object.keys(paymentStatus).length,
+        payments: paymentStatus
+    });
+});
+
+// Health check
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'Sistema de PIX funcionando!',
+        endpoints: {
+            gerarPix: 'POST /gerar-pix',
+            webhook: 'POST /webhook-pushinpay',
+            checkStatus: 'GET /check-status/:paymentId',
+            listPayments: 'GET /payments'
+        }
+    });
 });
 
 app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+    console.log(`📍 Webhook: https://grupo-backend-xagu.onrender.com/webhook-pushinpay`);
 });
