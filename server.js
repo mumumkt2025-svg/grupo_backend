@@ -1,7 +1,7 @@
 // server.js (VERSÃO EFI - Valor Fixo R$ 19,99)
 require('dotenv').config();
 const express = require('express');
-const Gerencianet = require('gn-api-sdk-node');
+const EfiPay = require('efi-pay');
 const cors = require('cors');
 
 const app = express();
@@ -13,11 +13,14 @@ app.use(express.json());
 app.use(cors());
 
 // Configuração da EFI
-const gerencianet = new Gerencianet({
+const options = {
   client_id: process.env.EFI_CLIENT_ID,
   client_secret: process.env.EFI_CLIENT_SECRET,
   sandbox: process.env.EFI_SANDBOX === 'true' || true,
-});
+  certificate: null // Em sandbox não precisa
+};
+
+const efi = new EfiPay(options);
 
 // VALOR FIXO DO PRODUTO
 const VALOR_FIXO = "19.99";
@@ -40,10 +43,6 @@ app.post('/gerar-pix', async (req, res) => {
                 {
                     nome: 'Produto',
                     valor: 'Meu Produto - Valor Fixo R$ 19,99'
-                },
-                {
-                    nome: 'Instrucoes',
-                    valor: 'NAO ALTERE O VALOR - Pague apenas R$ 19,99'
                 }
             ]
         };
@@ -51,20 +50,17 @@ app.post('/gerar-pix', async (req, res) => {
         console.log('📦 Criando cobrança na EFI...');
         
         // Criar cobrança na EFI
-        const charge = await gerencianet.pixCreateImmediateCharge([], body);
+        const charge = await efi.pixCreateImmediateCharge({}, body);
         
         // Gerar QR Code
-        const qrcode = await gerencianet.pixGenerateQRCode({
-            id: charge.loc.id
-        });
+        const qrcode = await efi.pixGenerateQRCode({ id: charge.loc.id });
 
         // Armazena o status usando txid como chave
         const paymentId = charge.txid;
         paymentStatus[paymentId] = {
             status: "created",
             valor: VALOR_FIXO,
-            createdAt: new Date(),
-            qrCode: qrcode.qrcode
+            createdAt: new Date()
         };
         
         console.log(`✅ PIX gerado com sucesso! TXID: ${paymentId}`);
@@ -76,18 +72,18 @@ app.post('/gerar-pix', async (req, res) => {
             qrCodeBase64: qrcode.imagemQrcode, // QR Code em base64
             copiaECola: qrcode.qrcode, // Código copia/cola
             valor: VALOR_FIXO,
-            chavePix: process.env.EFI_CHAVE_PIX, // Para mostrar o celular na página
+            chavePix: process.env.EFI_CHAVE_PIX,
             message: "Pague exatamente R$ 19,99"
         });
 
     } catch (error) {
         console.error('❌ Erro ao gerar PIX:', error);
-        console.error('Detalhes do erro:', error.response?.data || error.message);
+        console.error('Detalhes do erro:', error);
         
         res.status(500).json({ 
             success: false,
             error: 'Não foi possível gerar o PIX.',
-            details: error.response?.data || error.message
+            details: error.message
         });
     }
 });
@@ -120,11 +116,6 @@ app.post('/webhook-efi', (req, res) => {
                     
                     console.log(`✅ PAGAMENTO CONFIRMADO: ${txid}`);
                     console.log(`🎉 Produto liberado para o cliente!`);
-                    
-                    // Aqui você pode:
-                    // - Enviar email de confirmação
-                    // - Liberar acesso ao produto
-                    // - Notificar o sistema
                     
                 } else {
                     // ❌ VALOR INCORRETO - PAGAMENTO REJEITADO
