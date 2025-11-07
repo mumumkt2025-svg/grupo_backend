@@ -1,7 +1,7 @@
-// server.js (VERSÃO EFI - Valor Fixo R$ 19,99)
+// server.js (VERSÃO API DIRETA - Valor Fixo R$ 19,99)
 require('dotenv').config();
 const express = require('express');
-const Gerencianet = require('@gerencianet/gn-api-sdk-node');
+const axios = require('axios');
 const cors = require('cors');
 
 const app = express();
@@ -12,23 +12,43 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-// Configuração da EFI
-const options = {
-  client_id: process.env.EFI_CLIENT_ID,
-  client_secret: process.env.EFI_CLIENT_SECRET,
-  sandbox: process.env.EFI_SANDBOX === 'true' || true
-};
-
-const efi = new Gerencianet(options);
-
 // VALOR FIXO DO PRODUTO
 const VALOR_FIXO = "19.99";
 const paymentStatus = {};
+
+// Função para obter access token da EFI
+async function getEfiToken() {
+    try {
+        const auth = Buffer.from(
+            `${process.env.EFI_CLIENT_ID}:${process.env.EFI_CLIENT_SECRET}`
+        ).toString('base64');
+
+        const response = await axios({
+            method: 'POST',
+            url: 'https://api-pix.gerencianet.com.br/oauth/token',
+            headers: {
+                'Authorization': `Basic ${auth}`,
+                'Content-Type': 'application/json'
+            },
+            data: {
+                grant_type: 'client_credentials'
+            }
+        });
+
+        return response.data.access_token;
+    } catch (error) {
+        console.error('❌ Erro ao obter token:', error.response?.data || error.message);
+        throw error;
+    }
+}
 
 // Rota para GERAR PIX com valor fixo
 app.post('/gerar-pix', async (req, res) => {
     try {
         console.log('🔄 Iniciando geração de PIX...');
+        
+        // Obter token
+        const accessToken = await getEfiToken();
         
         const body = {
             calendario: {
@@ -49,10 +69,29 @@ app.post('/gerar-pix', async (req, res) => {
         console.log('📦 Criando cobrança na EFI...');
         
         // Criar cobrança na EFI
-        const charge = await efi.pixCreateImmediateCharge([], body);
+        const chargeResponse = await axios({
+            method: 'POST',
+            url: 'https://api-pix.gerencianet.com.br/v2/cob',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            data: body
+        });
+
+        const charge = chargeResponse.data;
         
         // Gerar QR Code
-        const qrcode = await efi.pixGenerateQRCode({ id: charge.loc.id });
+        const qrcodeResponse = await axios({
+            method: 'GET',
+            url: `https://api-pix.gerencianet.com.br/v2/loc/${charge.loc.id}/qrcode`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const qrcode = qrcodeResponse.data;
 
         // Armazena o status usando txid como chave
         const paymentId = charge.txid;
@@ -76,12 +115,12 @@ app.post('/gerar-pix', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Erro ao gerar PIX:', error);
+        console.error('❌ Erro ao gerar PIX:', error.response?.data || error.message);
         
         res.status(500).json({ 
             success: false,
             error: 'Não foi possível gerar o PIX.',
-            details: error.message
+            details: error.response?.data || error.message
         });
     }
 });
