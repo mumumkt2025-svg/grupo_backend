@@ -16,6 +16,6 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "node-fetch": "^2.7.0",
-    "@efipay/sdk-node": "^1.0.0"
+    "efi-pay": "^1.0.6"
   }
 }
