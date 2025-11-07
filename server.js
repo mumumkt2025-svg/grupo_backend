@@ -1,7 +1,7 @@
 // server.js (VERSÃO EFI - Valor Fixo R$ 19,99)
 require('dotenv').config();
 const express = require('express');
-const EfiPay = require('efi-pay');
+const Gerencianet = require('@gerencianet/gn-api-sdk-node');
 const cors = require('cors');
 
 const app = express();
@@ -16,11 +16,10 @@ app.use(cors());
 const options = {
   client_id: process.env.EFI_CLIENT_ID,
   client_secret: process.env.EFI_CLIENT_SECRET,
-  sandbox: process.env.EFI_SANDBOX === 'true' || true,
-  certificate: null // Em sandbox não precisa
+  sandbox: process.env.EFI_SANDBOX === 'true' || true
 };
 
-const efi = new EfiPay(options);
+const efi = new Gerencianet(options);
 
 // VALOR FIXO DO PRODUTO
 const VALOR_FIXO = "19.99";
@@ -50,7 +49,7 @@ app.post('/gerar-pix', async (req, res) => {
         console.log('📦 Criando cobrança na EFI...');
         
         // Criar cobrança na EFI
-        const charge = await efi.pixCreateImmediateCharge({}, body);
+        const charge = await efi.pixCreateImmediateCharge([], body);
         
         // Gerar QR Code
         const qrcode = await efi.pixGenerateQRCode({ id: charge.loc.id });
@@ -78,7 +77,6 @@ app.post('/gerar-pix', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Erro ao gerar PIX:', error);
-        console.error('Detalhes do erro:', error);
         
         res.status(500).json({ 
             success: false,
@@ -92,7 +90,6 @@ app.post('/gerar-pix', async (req, res) => {
 app.post('/webhook-efi', (req, res) => {
     try {
         console.log("🔔 Webhook da EFI recebido!");
-        console.log("📦 Dados do Webhook:", JSON.stringify(req.body, null, 2));
         
         const { pix } = req.body;
         
@@ -115,7 +112,6 @@ app.post('/webhook-efi', (req, res) => {
                     };
                     
                     console.log(`✅ PAGAMENTO CONFIRMADO: ${txid}`);
-                    console.log(`🎉 Produto liberado para o cliente!`);
                     
                 } else {
                     // ❌ VALOR INCORRETO - PAGAMENTO REJEITADO
@@ -127,7 +123,6 @@ app.post('/webhook-efi', (req, res) => {
                     };
                     
                     console.log(`❌ PAGAMENTO REJEITADO: Valor incorreto`);
-                    console.log(`📌 Esperado: R$ ${VALOR_FIXO}, Recebido: R$ ${valorRecebido}`);
                 }
             }
         }
