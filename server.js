@@ -1,7 +1,7 @@
 // server.js (VERSÃO EFI - Valor Fixo R$ 19,99)
 require('dotenv').config();
 const express = require('express');
-const Gerencianet = require('@gerencianet/gn-api-sdk-node');
+const Gerencianet = require('gn-api-sdk-node');
 const cors = require('cors');
 
 const app = express();
@@ -16,8 +16,7 @@ app.use(cors());
 const gerencianet = new Gerencianet({
   client_id: process.env.EFI_CLIENT_ID,
   client_secret: process.env.EFI_CLIENT_SECRET,
-  sandbox: process.env.EFI_SANDBOX === 'true' || true, // true para testes
-  // certificate: './certificado.pem' // em produção
+  sandbox: process.env.EFI_SANDBOX === 'true' || true,
 });
 
 // VALOR FIXO DO PRODUTO
@@ -36,7 +35,7 @@ app.post('/gerar-pix', async (req, res) => {
             valor: {
                 original: VALOR_FIXO // ⚠️ VALOR FIXO R$ 19,99
             },
-            chave: process.env.EFI_CHAVE_PIX, // Sua chave Pix aleatória
+            chave: process.env.EFI_CHAVE_PIX, // Seu celular +5566981107376
             infoAdicionais: [
                 {
                     nome: 'Produto',
@@ -77,6 +76,7 @@ app.post('/gerar-pix', async (req, res) => {
             qrCodeBase64: qrcode.imagemQrcode, // QR Code em base64
             copiaECola: qrcode.qrcode, // Código copia/cola
             valor: VALOR_FIXO,
+            chavePix: process.env.EFI_CHAVE_PIX, // Para mostrar o celular na página
             message: "Pague exatamente R$ 19,99"
         });
 
@@ -186,6 +186,7 @@ app.get('/payments', (req, res) => {
         success: true,
         totalPayments: Object.keys(paymentStatus).length,
         valorFixo: VALOR_FIXO,
+        chavePix: process.env.EFI_CHAVE_PIX,
         payments: paymentStatus
     });
 });
@@ -195,6 +196,7 @@ app.get('/', (req, res) => {
     res.json({ 
         message: 'Sistema de PIX com EFI funcionando!',
         valorFixo: `R$ ${VALOR_FIXO}`,
+        chavePix: process.env.EFI_CHAVE_PIX,
         endpoints: {
             gerarPix: 'POST /gerar-pix',
             webhook: 'POST /webhook-efi',
@@ -207,6 +209,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Servidor EFI rodando na porta ${PORT}`);
     console.log(`💰 VALOR FIXO: R$ ${VALOR_FIXO}`);
+    console.log(`📱 CHAVE PIX: ${process.env.EFI_CHAVE_PIX}`);
     console.log(`📍 Webhook: https://grupo-backend-xagu.onrender.com/webhook-efi`);
     console.log(`🔗 Health: https://grupo-backend-xagu.onrender.com/`);
 });
