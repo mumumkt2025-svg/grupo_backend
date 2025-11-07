@@ -1,14 +1,13 @@
 {
   "name": "nova-pasta",
   "version": "1.0.0",
-  "description": "Sistema de PIX com EFI - Valor Fixo R$ 19,99",
+  "description": "",
   "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node server.js"
   },
-  "keywords": ["pix", "efi", "pagamentos"],
+  "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -16,6 +15,6 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "node-fetch": "^2.7.0",
-    "efi-pay": "^1.0.6"
+    "gn-api-sdk-node": "^2.1.1"
   }
 }
