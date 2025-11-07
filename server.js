@@ -1,10 +1,9 @@
-// server.js (VERSÃO EFI COM HTTPS - Valor Fixo R$ 19,99)
+// server.js (VERSÃO DEBUG - Vamos ver o erro real)
 require('dotenv').config();
 const express = require('express');
 const https = require('https');
 const axios = require('axios');
 const cors = require('cors');
-const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,27 +13,36 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-// VALOR FIXO DO PRODUTO
+// VALOR FIXO
 const VALOR_FIXO = "19.99";
 const paymentStatus = {};
 
-// AGENT HTTPS para ignorar certificado (SANDBOX)
+// AGENT HTTPS
 const agent = new https.Agent({
-  rejectUnauthorized: false // ⚠️ Só para sandbox!
+  rejectUnauthorized: false
 });
 
-// Função para obter access token da EFI
+// DEBUG: Log das variáveis de ambiente (sem mostrar segredos)
+console.log('🔍 DEBUG - Variáveis de ambiente:');
+console.log('EFI_CLIENT_ID:', process.env.EFI_CLIENT_ID ? '✅ Configurado' : '❌ Faltando');
+console.log('EFI_CLIENT_SECRET:', process.env.EFI_CLIENT_SECRET ? '✅ Configurado' : '❌ Faltando');
+console.log('EFI_CHAVE_PIX:', process.env.EFI_CHAVE_PIX ? '✅ Configurado' : '❌ Faltando');
+console.log('EFI_SANDBOX:', process.env.EFI_SANDBOX);
+
+// Função para obter token
 async function getEfiToken() {
     try {
+        console.log('🔑 Tentando obter token da EFI...');
+        
         const auth = Buffer.from(
             `${process.env.EFI_CLIENT_ID}:${process.env.EFI_CLIENT_SECRET}`
         ).toString('base64');
 
-        console.log('🔑 Obtendo token da EFI...');
+        console.log('📡 Endpoint:', 'https://api-pix-h.gerencianet.com.br/oauth/token');
         
         const response = await axios({
             method: 'POST',
-            url: 'https://api-pix-h.gerencianet.com.br/oauth/token', // SANDBOX
+            url: 'https://api-pix-h.gerencianet.com.br/oauth/token',
             headers: {
                 'Authorization': `Basic ${auth}`,
                 'Content-Type': 'application/json'
@@ -42,58 +50,54 @@ async function getEfiToken() {
             data: {
                 grant_type: 'client_credentials'
             },
-            httpsAgent: agent // Ignora certificado
+            httpsAgent: agent,
+            timeout: 10000
         });
 
         console.log('✅ Token obtido com sucesso!');
         return response.data.access_token;
+        
     } catch (error) {
-        console.error('❌ Erro ao obter token:', error.response?.data || error.message);
+        console.error('❌ ERRO DETALHADO no token:');
+        console.error('Código:', error.code);
+        console.error('Mensagem:', error.message);
+        console.error('Response:', error.response?.data);
+        console.error('Status:', error.response?.status);
         throw error;
     }
 }
 
-// Rota para GERAR PIX com valor fixo
+// Rota para GERAR PIX
 app.post('/gerar-pix', async (req, res) => {
     try {
         console.log('🔄 Iniciando geração de PIX...');
         
-        // Obter token
         const accessToken = await getEfiToken();
         
         const body = {
-            calendario: {
-                expiracao: 3600 // 1 hora
-            },
-            valor: {
-                original: VALOR_FIXO // ⚠️ VALOR FIXO R$ 19,99
-            },
-            chave: process.env.EFI_CHAVE_PIX, // Seu celular +5566981107376
-            infoAdicionais: [
-                {
-                    nome: 'Produto',
-                    valor: 'Meu Produto - Valor Fixo R$ 19,99'
-                }
-            ]
+            calendario: { expiracao: 3600 },
+            valor: { original: VALOR_FIXO },
+            chave: process.env.EFI_CHAVE_PIX,
+            infoAdicionais: [{ nome: 'Produto', valor: 'Meu Produto - R$ 19,99' }]
         };
 
-        console.log('📦 Criando cobrança na EFI...');
+        console.log('📦 Criando cobrança...');
         
-        // Criar cobrança na EFI
         const chargeResponse = await axios({
             method: 'POST',
-            url: 'https://api-pix-h.gerencianet.com.br/v2/cob', // SANDBOX
+            url: 'https://api-pix-h.gerencianet.com.br/v2/cob',
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json'
             },
             data: body,
-            httpsAgent: agent
+            httpsAgent: agent,
+            timeout: 10000
         });
 
         const charge = chargeResponse.data;
         
-        // Gerar QR Code
+        console.log('📷 Gerando QR Code...');
         const qrcodeResponse = await axios({
             method: 'GET',
             url: `https://api-pix-h.gerencianet.com.br/v2/loc/${charge.loc.id}/qrcode`,
@@ -105,17 +109,11 @@ app.post('/gerar-pix', async (req, res) => {
         });
 
         const qrcode = qrcodeResponse.data;
-
-        // Armazena o status usando txid como chave
         const paymentId = charge.txid;
-        paymentStatus[paymentId] = {
-            status: "created",
-            valor: VALOR_FIXO,
-            createdAt: new Date()
-        };
         
-        console.log(`✅ PIX gerado com sucesso! TXID: ${paymentId}`);
-        console.log(`💰 Valor fixo: R$ ${VALOR_FIXO}`);
+        paymentStatus[paymentId] = { status: "created", valor: VALOR_FIXO, createdAt: new Date() };
+        
+        console.log(`✅ PIX gerado! TXID: ${paymentId}`);
 
         res.json({
             success: true,
@@ -128,110 +126,37 @@ app.post('/gerar-pix', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Erro ao gerar PIX:', error.response?.data || error.message);
+        console.error('❌ ERRO FINAL no PIX:');
+        console.error('Código:', error.code);
+        console.error('Mensagem:', error.message);
+        console.error('Response data:', error.response?.data);
+        console.error('Response status:', error.response?.status);
         
         res.status(500).json({ 
             success: false,
             error: 'Não foi possível gerar o PIX.',
-            details: error.response?.data || error.message
+            details: error.response?.data || error.message,
+            code: error.code
         });
     }
 });
 
-// WEBHOOK da EFI - Só aceita R$ 19,99
+// Webhook
 app.post('/webhook-efi', (req, res) => {
-    try {
-        console.log("🔔 Webhook da EFI recebido!");
-        
-        const { pix } = req.body;
-        
-        if (pix && pix.length > 0) {
-            for (const payment of pix) {
-                const { txid, valor } = payment;
-                const valorRecebido = (valor / 100).toFixed(2);
-                
-                console.log(`💰 Tentativa de pagamento - TXID: ${txid}`);
-                console.log(`💵 Valor recebido: R$ ${valorRecebido}`);
-                
-                if (valorRecebido === VALOR_FIXO) {
-                    paymentStatus[txid] = {
-                        ...paymentStatus[txid],
-                        status: 'paid',
-                        paidAt: new Date(),
-                        valorRecebido: valorRecebido
-                    };
-                    
-                    console.log(`✅ PAGAMENTO CONFIRMADO: ${txid}`);
-                    
-                } else {
-                    paymentStatus[txid] = {
-                        ...paymentStatus[txid],
-                        status: 'valor_incorreto',
-                        valorRecebido: valorRecebido,
-                        rejectedAt: new Date()
-                    };
-                    
-                    console.log(`❌ PAGAMENTO REJEITADO: Valor incorreto`);
-                }
-            }
-        }
-
-        res.status(200).json({ 
-            success: true, 
-            message: "Webhook processado" 
-        });
-        
-    } catch (error) {
-        console.error('❌ Erro no webhook:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: "Erro no processamento" 
-        });
-    }
-});
-
-// Verificar status do pagamento
-app.get('/check-status/:paymentId', (req, res) => {
-    const paymentId = req.params.paymentId;
-    const payment = paymentStatus[paymentId];
-    
-    if (!payment) {
-        return res.json({ 
-            success: false,
-            status: 'not_found',
-            message: 'Pagamento não encontrado'
-        });
-    }
-    
-    res.json({ 
-        success: true,
-        paymentId: paymentId,
-        status: payment.status,
-        valorEsperado: VALOR_FIXO,
-        valorRecebido: payment.valorRecebido,
-        message: payment.status === 'paid' ? '✅ Pagamento confirmado!' : 
-                payment.status === 'valor_incorreto' ? '❌ Valor incorreto' : 
-                '⏳ Aguardando pagamento'
-    });
+    console.log("🔔 Webhook recebido:", JSON.stringify(req.body));
+    res.status(200).json({ success: true });
 });
 
 // Health check
 app.get('/', (req, res) => {
     res.json({ 
-        message: 'Sistema de PIX com EFI funcionando!',
+        message: 'Sistema de PIX funcionando!',
         valorFixo: `R$ ${VALOR_FIXO}`,
-        chavePix: process.env.EFI_CHAVE_PIX,
-        endpoints: {
-            gerarPix: 'POST /gerar-pix',
-            webhook: 'POST /webhook-efi',
-            checkStatus: 'GET /check-status/:paymentId'
-        }
+        status: 'debug'
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor EFI rodando na porta ${PORT}`);
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
     console.log(`💰 VALOR FIXO: R$ ${VALOR_FIXO}`);
-    console.log(`📱 CHAVE PIX: ${process.env.EFI_CHAVE_PIX}`);
-    console.log(`📍 Webhook: https://grupo-backend-xagu.onrender.com/webhook-efi`);
 });
