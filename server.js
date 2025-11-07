@@ -1,8 +1,10 @@
-// server.js (VERSÃO API DIRETA - Valor Fixo R$ 19,99)
+// server.js (VERSÃO EFI COM HTTPS - Valor Fixo R$ 19,99)
 require('dotenv').config();
 const express = require('express');
+const https = require('https');
 const axios = require('axios');
 const cors = require('cors');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,6 +18,11 @@ app.use(cors());
 const VALOR_FIXO = "19.99";
 const paymentStatus = {};
 
+// AGENT HTTPS para ignorar certificado (SANDBOX)
+const agent = new https.Agent({
+  rejectUnauthorized: false // ⚠️ Só para sandbox!
+});
+
 // Função para obter access token da EFI
 async function getEfiToken() {
     try {
@@ -23,18 +30,22 @@ async function getEfiToken() {
             `${process.env.EFI_CLIENT_ID}:${process.env.EFI_CLIENT_SECRET}`
         ).toString('base64');
 
+        console.log('🔑 Obtendo token da EFI...');
+        
         const response = await axios({
             method: 'POST',
-            url: 'https://api-pix.gerencianet.com.br/oauth/token',
+            url: 'https://api-pix-h.gerencianet.com.br/oauth/token', // SANDBOX
             headers: {
                 'Authorization': `Basic ${auth}`,
                 'Content-Type': 'application/json'
             },
             data: {
                 grant_type: 'client_credentials'
-            }
+            },
+            httpsAgent: agent // Ignora certificado
         });
 
+        console.log('✅ Token obtido com sucesso!');
         return response.data.access_token;
     } catch (error) {
         console.error('❌ Erro ao obter token:', error.response?.data || error.message);
@@ -71,12 +82,13 @@ app.post('/gerar-pix', async (req, res) => {
         // Criar cobrança na EFI
         const chargeResponse = await axios({
             method: 'POST',
-            url: 'https://api-pix.gerencianet.com.br/v2/cob',
+            url: 'https://api-pix-h.gerencianet.com.br/v2/cob', // SANDBOX
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json'
             },
-            data: body
+            data: body,
+            httpsAgent: agent
         });
 
         const charge = chargeResponse.data;
@@ -84,11 +96,12 @@ app.post('/gerar-pix', async (req, res) => {
         // Gerar QR Code
         const qrcodeResponse = await axios({
             method: 'GET',
-            url: `https://api-pix.gerencianet.com.br/v2/loc/${charge.loc.id}/qrcode`,
+            url: `https://api-pix-h.gerencianet.com.br/v2/loc/${charge.loc.id}/qrcode`,
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json'
-            }
+            },
+            httpsAgent: agent
         });
 
         const qrcode = qrcodeResponse.data;
@@ -107,8 +120,8 @@ app.post('/gerar-pix', async (req, res) => {
         res.json({
             success: true,
             paymentId: paymentId,
-            qrCodeBase64: qrcode.imagemQrcode, // QR Code em base64
-            copiaECola: qrcode.qrcode, // Código copia/cola
+            qrCodeBase64: qrcode.imagemQrcode,
+            copiaECola: qrcode.qrcode,
             valor: VALOR_FIXO,
             chavePix: process.env.EFI_CHAVE_PIX,
             message: "Pague exatamente R$ 19,99"
@@ -140,9 +153,7 @@ app.post('/webhook-efi', (req, res) => {
                 console.log(`💰 Tentativa de pagamento - TXID: ${txid}`);
                 console.log(`💵 Valor recebido: R$ ${valorRecebido}`);
                 
-                // ⚠️ VALIDAÇÃO DO VALOR FIXO
                 if (valorRecebido === VALOR_FIXO) {
-                    // ✅ VALOR CORRETO - PAGAMENTO ACEITO
                     paymentStatus[txid] = {
                         ...paymentStatus[txid],
                         status: 'paid',
@@ -153,7 +164,6 @@ app.post('/webhook-efi', (req, res) => {
                     console.log(`✅ PAGAMENTO CONFIRMADO: ${txid}`);
                     
                 } else {
-                    // ❌ VALOR INCORRETO - PAGAMENTO REJEITADO
                     paymentStatus[txid] = {
                         ...paymentStatus[txid],
                         status: 'valor_incorreto',
@@ -205,17 +215,6 @@ app.get('/check-status/:paymentId', (req, res) => {
     });
 });
 
-// Rota para listar todos os pagamentos (debug)
-app.get('/payments', (req, res) => {
-    res.json({
-        success: true,
-        totalPayments: Object.keys(paymentStatus).length,
-        valorFixo: VALOR_FIXO,
-        chavePix: process.env.EFI_CHAVE_PIX,
-        payments: paymentStatus
-    });
-});
-
 // Health check
 app.get('/', (req, res) => {
     res.json({ 
@@ -225,8 +224,7 @@ app.get('/', (req, res) => {
         endpoints: {
             gerarPix: 'POST /gerar-pix',
             webhook: 'POST /webhook-efi',
-            checkStatus: 'GET /check-status/:paymentId',
-            listPayments: 'GET /payments'
+            checkStatus: 'GET /check-status/:paymentId'
         }
     });
 });
@@ -236,5 +234,4 @@ app.listen(PORT, () => {
     console.log(`💰 VALOR FIXO: R$ ${VALOR_FIXO}`);
     console.log(`📱 CHAVE PIX: ${process.env.EFI_CHAVE_PIX}`);
     console.log(`📍 Webhook: https://grupo-backend-xagu.onrender.com/webhook-efi`);
-    console.log(`🔗 Health: https://grupo-backend-xagu.onrender.com/`);
 });
