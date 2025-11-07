@@ -1,8 +1,7 @@
-// server.js (VERSÃO CORRIGIDA - IDs normalizados)
-
+// server.js (VERSÃO EFI - Valor Fixo R$ 19,99)
 require('dotenv').config();
 const express = require('express');
-const fetch = require('node-fetch');
+const Gerencianet = require('@gerencianet/gn-api-sdk-node');
 const cors = require('cors');
 
 const app = express();
@@ -13,97 +12,180 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-const PUSHIN_TOKEN = process.env.PUSHIN_TOKEN;
+// Configuração da EFI
+const gerencianet = new Gerencianet({
+  client_id: process.env.EFI_CLIENT_ID,
+  client_secret: process.env.EFI_CLIENT_SECRET,
+  sandbox: process.env.EFI_SANDBOX === 'true' || true, // true para testes
+  // certificate: './certificado.pem' // em produção
+});
+
+// VALOR FIXO DO PRODUTO
+const VALOR_FIXO = "19.99";
 const paymentStatus = {};
 
-// Rota para GERAR PIX
+// Rota para GERAR PIX com valor fixo
 app.post('/gerar-pix', async (req, res) => {
     try {
-        const apiUrl = 'https://api.pushinpay.com.br/api/pix/cashIn';
+        console.log('🔄 Iniciando geração de PIX...');
         
-        const paymentData = {
-            value: 1999,
-            webhook_url: `https://grupo-backend-xagu.onrender.com/webhook-pushinpay` 
+        const body = {
+            calendario: {
+                expiracao: 3600 // 1 hora
+            },
+            valor: {
+                original: VALOR_FIXO // ⚠️ VALOR FIXO R$ 19,99
+            },
+            chave: process.env.EFI_CHAVE_PIX, // Sua chave Pix aleatória
+            infoAdicionais: [
+                {
+                    nome: 'Produto',
+                    valor: 'Meu Produto - Valor Fixo R$ 19,99'
+                },
+                {
+                    nome: 'Instrucoes',
+                    valor: 'NAO ALTERE O VALOR - Pague apenas R$ 19,99'
+                }
+            ]
         };
 
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${PUSHIN_TOKEN}`
-            },
-            body: JSON.stringify(paymentData)
+        console.log('📦 Criando cobrança na EFI...');
+        
+        // Criar cobrança na EFI
+        const charge = await gerencianet.pixCreateImmediateCharge([], body);
+        
+        // Gerar QR Code
+        const qrcode = await gerencianet.pixGenerateQRCode({
+            id: charge.loc.id
         });
 
-        const data = await response.json();
+        // Armazena o status usando txid como chave
+        const paymentId = charge.txid;
+        paymentStatus[paymentId] = {
+            status: "created",
+            valor: VALOR_FIXO,
+            createdAt: new Date(),
+            qrCode: qrcode.qrcode
+        };
         
-        if (!response.ok || !data.id) {
-            console.error('ERRO na API PushinPay:', data);
-            throw new Error(data.message || 'Resposta inválida da API');
-        }
-
-        // Armazena o ID em minúsculas para consistência
-        const normalizedId = data.id.toLowerCase();
-        paymentStatus[normalizedId] = "created";
-        
-        console.log(`✅ PIX gerado com sucesso! ID: ${normalizedId}`);
+        console.log(`✅ PIX gerado com sucesso! TXID: ${paymentId}`);
+        console.log(`💰 Valor fixo: R$ ${VALOR_FIXO}`);
 
         res.json({
-            paymentId: normalizedId, // Retorna em minúsculas para o frontend
-            qrCodeBase64: data.qr_code_base64,
-            copiaECola: data.qr_code
+            success: true,
+            paymentId: paymentId,
+            qrCodeBase64: qrcode.imagemQrcode, // QR Code em base64
+            copiaECola: qrcode.qrcode, // Código copia/cola
+            valor: VALOR_FIXO,
+            message: "Pague exatamente R$ 19,99"
         });
 
     } catch (error) {
-        console.error('Erro ao gerar PIX:', error.message);
-        res.status(500).json({ error: 'Não foi possível gerar o PIX.' });
+        console.error('❌ Erro ao gerar PIX:', error);
+        console.error('Detalhes do erro:', error.response?.data || error.message);
+        
+        res.status(500).json({ 
+            success: false,
+            error: 'Não foi possível gerar o PIX.',
+            details: error.response?.data || error.message
+        });
     }
 });
 
-// Webhook - VERSÃO CORRIGIDA (IDs normalizados)
-app.post('/webhook-pushinpay', (req, res) => {
-    console.log("Webhook da PushinPay recebido!");
-    
-    const webhookData = req.body;
-    console.log("Dados do Webhook:", webhookData);
-
-    if (webhookData && webhookData.id) {
-        // CORREÇÃO: Normaliza o ID para minúsculas
-        const normalizedId = webhookData.id.toLowerCase();
+// WEBHOOK da EFI - Só aceita R$ 19,99
+app.post('/webhook-efi', (req, res) => {
+    try {
+        console.log("🔔 Webhook da EFI recebido!");
+        console.log("📦 Dados do Webhook:", JSON.stringify(req.body, null, 2));
         
-        console.log(`🎉 Webhook recebido - ID: ${normalizedId}, Status: ${webhookData.status}`);
+        const { pix } = req.body;
         
-        if (webhookData.status === 'paid') {
-            paymentStatus[normalizedId] = 'paid';
-            console.log(`💰 PAGAMENTO CONFIRMADO: ${normalizedId}`);
-            console.log(`👤 Pagador: ${webhookData.payer_name}`);
-            console.log(`💳 Valor: R$ ${(webhookData.value / 100).toFixed(2)}`);
-        } else {
-            paymentStatus[normalizedId] = webhookData.status;
-            console.log(`Status atualizado: ${normalizedId} -> ${webhookData.status}`);
+        if (pix && pix.length > 0) {
+            for (const payment of pix) {
+                const { txid, valor } = payment;
+                const valorRecebido = (valor / 100).toFixed(2);
+                
+                console.log(`💰 Tentativa de pagamento - TXID: ${txid}`);
+                console.log(`💵 Valor recebido: R$ ${valorRecebido}`);
+                
+                // ⚠️ VALIDAÇÃO DO VALOR FIXO
+                if (valorRecebido === VALOR_FIXO) {
+                    // ✅ VALOR CORRETO - PAGAMENTO ACEITO
+                    paymentStatus[txid] = {
+                        ...paymentStatus[txid],
+                        status: 'paid',
+                        paidAt: new Date(),
+                        valorRecebido: valorRecebido
+                    };
+                    
+                    console.log(`✅ PAGAMENTO CONFIRMADO: ${txid}`);
+                    console.log(`🎉 Produto liberado para o cliente!`);
+                    
+                    // Aqui você pode:
+                    // - Enviar email de confirmação
+                    // - Liberar acesso ao produto
+                    // - Notificar o sistema
+                    
+                } else {
+                    // ❌ VALOR INCORRETO - PAGAMENTO REJEITADO
+                    paymentStatus[txid] = {
+                        ...paymentStatus[txid],
+                        status: 'valor_incorreto',
+                        valorRecebido: valorRecebido,
+                        rejectedAt: new Date()
+                    };
+                    
+                    console.log(`❌ PAGAMENTO REJEITADO: Valor incorreto`);
+                    console.log(`📌 Esperado: R$ ${VALOR_FIXO}, Recebido: R$ ${valorRecebido}`);
+                }
+            }
         }
-    }
 
-    res.status(200).json({ success: true, message: "Webhook processado" });
+        res.status(200).json({ 
+            success: true, 
+            message: "Webhook processado" 
+        });
+        
+    } catch (error) {
+        console.error('❌ Erro no webhook:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: "Erro no processamento" 
+        });
+    }
 });
 
-// Verificar status do pagamento - VERSÃO CORRIGIDA
+// Verificar status do pagamento
 app.get('/check-status/:paymentId', (req, res) => {
-    // CORREÇÃO: Normaliza o ID para minúsculas
-    const paymentId = req.params.paymentId.toLowerCase();
-    const status = paymentStatus[paymentId] || 'not_found';
+    const paymentId = req.params.paymentId;
+    const payment = paymentStatus[paymentId];
+    
+    if (!payment) {
+        return res.json({ 
+            success: false,
+            status: 'not_found',
+            message: 'Pagamento não encontrado'
+        });
+    }
     
     res.json({ 
-        paymentId,
-        status: status,
-        message: status === 'paid' ? 'Pagamento confirmado!' : 'Aguardando pagamento'
+        success: true,
+        paymentId: paymentId,
+        status: payment.status,
+        valorEsperado: VALOR_FIXO,
+        valorRecebido: payment.valorRecebido,
+        message: payment.status === 'paid' ? '✅ Pagamento confirmado!' : 
+                payment.status === 'valor_incorreto' ? '❌ Valor incorreto' : 
+                '⏳ Aguardando pagamento'
     });
 });
 
-// Rota para listar todos os pagamentos (útil para debug)
+// Rota para listar todos os pagamentos (debug)
 app.get('/payments', (req, res) => {
     res.json({
+        success: true,
         totalPayments: Object.keys(paymentStatus).length,
+        valorFixo: VALOR_FIXO,
         payments: paymentStatus
     });
 });
@@ -111,10 +193,11 @@ app.get('/payments', (req, res) => {
 // Health check
 app.get('/', (req, res) => {
     res.json({ 
-        message: 'Sistema de PIX funcionando!',
+        message: 'Sistema de PIX com EFI funcionando!',
+        valorFixo: `R$ ${VALOR_FIXO}`,
         endpoints: {
             gerarPix: 'POST /gerar-pix',
-            webhook: 'POST /webhook-pushinpay',
+            webhook: 'POST /webhook-efi',
             checkStatus: 'GET /check-status/:paymentId',
             listPayments: 'GET /payments'
         }
@@ -122,6 +205,8 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}`);
-    console.log(`📍 Webhook: https://grupo-backend-xagu.onrender.com/webhook-pushinpay`);
+    console.log(`🚀 Servidor EFI rodando na porta ${PORT}`);
+    console.log(`💰 VALOR FIXO: R$ ${VALOR_FIXO}`);
+    console.log(`📍 Webhook: https://grupo-backend-xagu.onrender.com/webhook-efi`);
+    console.log(`🔗 Health: https://grupo-backend-xagu.onrender.com/`);
 });
