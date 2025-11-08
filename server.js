@@ -1,182 +1,127 @@
-// server.js (VERSÃO COM WEBHOOK REAL)
+// server.js (VERSÃO CORRIGIDA - IDs normalizados)
+
 require('dotenv').config();
 const express = require('express');
-const axios = require('axios');
+const fetch = require('node-fetch');
 const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Middleware
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-const VALOR_FIXO = "19.99";
+const PUSHIN_TOKEN = process.env.PUSHIN_TOKEN;
 const paymentStatus = {};
 
-// GERAR PIX COM WEBHOOK REAL
+// Rota para GERAR PIX
 app.post('/gerar-pix', async (req, res) => {
     try {
-        console.log('🔄 Gerando PIX WiinPay...');
+        const apiUrl = 'https://api.pushinpay.com.br/api/pix/cashIn';
         
-        const response = await axios({
-            method: 'POST',
-            url: 'https://api.wiinpay.com.br/payment/create',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            data: {
-                api_key: process.env.WIINPAY_API_KEY,
-                value: 19.99, // VALOR FIXO R$ 19,99
-                name: "Cliente Site",
-                email: "cliente@site.com", 
-                description: "Meu Produto - Valor Fixo R$ 19,99",
-                webhook_url: "https://webhook.site/20cbcf2d-6741-4af2-9e3d-1ea49894b6b0", // SEU WEBHOOK REAL
-                metadata: {
-                    produto: "Meu Produto",
-                    valor_fixo: "19.99"
-                }
-            }
-        });
-
-        const data = response.data;
-        
-        // Verificar estrutura da resposta
-        const paymentId = data.id || data.payment_id || data.transaction_id;
-        
-        if (!paymentId) {
-            throw new Error('ID do pagamento não retornado');
-        }
-
-        paymentStatus[paymentId] = {
-            status: "pending",
-            valor: VALOR_FIXO,
-            createdAt: new Date(),
-            qrCode: data.qr_code,
-            qrCodeBase64: data.qr_code_base64 || data.qr_code_image,
-            pixCode: data.pix_code || data.copy_paste,
-            rawData: data
+        const paymentData = {
+            value: 1999,
+            webhook_url: `https://grupo-backend-xagu.onrender.com/webhook-pushinpay` 
         };
 
-        console.log(`✅ PIX WiinPay gerado! ID: ${paymentId}`);
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${PUSHIN_TOKEN}`
+            },
+            body: JSON.stringify(paymentData)
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok || !data.id) {
+            console.error('ERRO na API PushinPay:', data);
+            throw new Error(data.message || 'Resposta inválida da API');
+        }
+
+        // Armazena o ID em minúsculas para consistência
+        const normalizedId = data.id.toLowerCase();
+        paymentStatus[normalizedId] = "created";
+        
+        console.log(`✅ PIX gerado com sucesso! ID: ${normalizedId}`);
 
         res.json({
-            success: true,
-            paymentId: paymentId,
-            qrCodeBase64: data.qr_code_base64 || data.qr_code_image || data.qr_code,
-            copiaECola: data.pix_code || data.copy_paste || data.qr_code,
-            valor: VALOR_FIXO,
-            chavePix: "Sistema WiinPay",
-            message: "Pague exatamente R$ 19,99"
+            paymentId: normalizedId, // Retorna em minúsculas para o frontend
+            qrCodeBase64: data.qr_code_base64,
+            copiaECola: data.qr_code
         });
 
     } catch (error) {
-        console.error('❌ Erro WiinPay:', error.response?.data || error.message);
-        res.status(500).json({ 
-            success: false,
-            error: 'Não foi possível gerar o PIX.',
-            details: error.response?.data || error.message
-        });
+        console.error('Erro ao gerar PIX:', error.message);
+        res.status(500).json({ error: 'Não foi possível gerar o PIX.' });
     }
 });
 
-// VERIFICAR STATUS REAL NA WIINPAY (PRINCIPAL)
-app.get('/check-payment/:paymentId', async (req, res) => {
-    try {
-        const paymentId = req.params.paymentId;
-        
-        console.log(`🔍 Verificando status real: ${paymentId}`);
-        
-        const response = await axios({
-            method: 'GET',
-            url: `https://api.wiinpay.com.br/payment/list/${paymentId}`,
-            headers: {
-                'Accept': 'application/json',
-                'Authorization': `Bearer ${process.env.WIINPAY_API_KEY}`,
-                'User-Agent': 'insomnia/11.1.0'
-            }
-        });
+// Webhook - VERSÃO CORRIGIDA (IDs normalizados)
+app.post('/webhook-pushinpay', (req, res) => {
+    console.log("Webhook da PushinPay recebido!");
+    
+    const webhookData = req.body;
+    console.log("Dados do Webhook:", webhookData);
 
-        const paymentData = response.data;
+    if (webhookData && webhookData.id) {
+        // CORREÇÃO: Normaliza o ID para minúsculas
+        const normalizedId = webhookData.id.toLowerCase();
         
-        console.log('📊 Dados do pagamento:', paymentData);
+        console.log(`🎉 Webhook recebido - ID: ${normalizedId}, Status: ${webhookData.status}`);
         
-        const status = paymentData.status || paymentData.payment_status;
-        const valorRecebido = parseFloat(paymentData.value || paymentData.amount).toFixed(2);
-        
-        let statusFinal = 'pending';
-        
-        if (status === 'paid' || status === 'approved' || status === 'completed') {
-            if (valorRecebido === VALOR_FIXO) {
-                statusFinal = 'paid';
-                console.log(`✅ PAGAMENTO CONFIRMADO: ${paymentId}`);
-            } else {
-                statusFinal = 'valor_incorreto';
-                console.log(`❌ VALOR INCORRETO: R$ ${valorRecebido}`);
-            }
+        if (webhookData.status === 'paid') {
+            paymentStatus[normalizedId] = 'paid';
+            console.log(`💰 PAGAMENTO CONFIRMADO: ${normalizedId}`);
+            console.log(`👤 Pagador: ${webhookData.payer_name}`);
+            console.log(`💳 Valor: R$ ${(webhookData.value / 100).toFixed(2)}`);
+        } else {
+            paymentStatus[normalizedId] = webhookData.status;
+            console.log(`Status atualizado: ${normalizedId} -> ${webhookData.status}`);
         }
-        
-        paymentStatus[paymentId] = {
-            ...paymentStatus[paymentId],
-            status: statusFinal,
-            valorRecebido: valorRecebido,
-            lastChecked: new Date()
-        };
-
-        const updatedPayment = paymentStatus[paymentId];
-        
-        res.json({ 
-            success: true,
-            paymentId: paymentId,
-            status: updatedPayment.status,
-            valorEsperado: VALOR_FIXO,
-            valorRecebido: updatedPayment.valorRecebido,
-            message: updatedPayment.status === 'paid' ? '✅ Pagamento confirmado!' : 
-                    updatedPayment.status === 'valor_incorreto' ? '❌ Valor incorreto' : 
-                    '⏳ Aguardando pagamento...'
-        });
-
-    } catch (error) {
-        console.error('❌ Erro ao verificar:', error.response?.data || error.message);
-        
-        const payment = paymentStatus[req.params.paymentId];
-        res.json({ 
-            success: false,
-            paymentId: req.params.paymentId,
-            status: payment?.status || 'error',
-            message: 'Erro ao verificar'
-        });
     }
+
+    res.status(200).json({ success: true, message: "Webhook processado" });
 });
 
-// Rota rápida para frontend
+// Verificar status do pagamento - VERSÃO CORRIGIDA
 app.get('/check-status/:paymentId', (req, res) => {
-    const paymentId = req.params.paymentId;
-    const payment = paymentStatus[paymentId];
+    // CORREÇÃO: Normaliza o ID para minúsculas
+    const paymentId = req.params.paymentId.toLowerCase();
+    const status = paymentStatus[paymentId] || 'not_found';
     
     res.json({ 
-        success: true,
-        paymentId: paymentId,
-        status: payment?.status || 'not_found',
-        valorEsperado: VALOR_FIXO,
-        valorRecebido: payment?.valorRecebido,
-        message: payment?.status === 'paid' ? '✅ Pagamento confirmado!' : 
-                payment?.status === 'valor_incorreto' ? '❌ Valor incorreto' : 
-                '⏳ Aguardando pagamento...'
+        paymentId,
+        status: status,
+        message: status === 'paid' ? 'Pagamento confirmado!' : 'Aguardando pagamento'
+    });
+});
+
+// Rota para listar todos os pagamentos (útil para debug)
+app.get('/payments', (req, res) => {
+    res.json({
+        totalPayments: Object.keys(paymentStatus).length,
+        payments: paymentStatus
     });
 });
 
 // Health check
 app.get('/', (req, res) => {
     res.json({ 
-        message: 'WiinPay funcionando!',
-        valorFixo: 'R$ 19,99',
-        webhook: 'https://webhook.site/20cbcf2d-6741-4af2-9e3d-1ea49894b6b0'
+        message: 'Sistema de PIX funcionando!',
+        endpoints: {
+            gerarPix: 'POST /gerar-pix',
+            webhook: 'POST /webhook-pushinpay',
+            checkStatus: 'GET /check-status/:paymentId',
+            listPayments: 'GET /payments'
+        }
     });
 });
 
 app.listen(PORT, () => {
     console.log(`🚀 Servidor rodando na porta ${PORT}`);
-    console.log(`💰 VALOR FIXO: R$ 19,99`);
-    console.log(`🔔 Webhook: https://webhook.site/20cbcf2d-6741-4af2-9e3d-1ea49894b6b0`);
+    console.log(`📍 Webhook: https://grupo-backend-xagu.onrender.com/webhook-pushinpay`);
 });
