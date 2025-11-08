@@ -1,4 +1,4 @@
-// server.js (VERSÃO WIINPAY COM VERIFICAÇÃO REAL)
+// server.js (VERSÃO COM WEBHOOK REAL)
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -13,7 +13,7 @@ app.use(cors());
 const VALOR_FIXO = "19.99";
 const paymentStatus = {};
 
-// GERAR PIX WIINPAY
+// GERAR PIX COM WEBHOOK REAL
 app.post('/gerar-pix', async (req, res) => {
     try {
         console.log('🔄 Gerando PIX WiinPay...');
@@ -31,7 +31,7 @@ app.post('/gerar-pix', async (req, res) => {
                 name: "Cliente Site",
                 email: "cliente@site.com", 
                 description: "Meu Produto - Valor Fixo R$ 19,99",
-                webhook_url: "", // VAZIO - SEM WEBHOOK
+                webhook_url: "https://webhook.site/20cbcf2d-6741-4af2-9e3d-1ea49894b6b0", // SEU WEBHOOK REAL
                 metadata: {
                     produto: "Meu Produto",
                     valor_fixo: "19.99"
@@ -55,7 +55,7 @@ app.post('/gerar-pix', async (req, res) => {
             qrCode: data.qr_code,
             qrCodeBase64: data.qr_code_base64 || data.qr_code_image,
             pixCode: data.pix_code || data.copy_paste,
-            rawData: data // Guarda resposta completa
+            rawData: data
         };
 
         console.log(`✅ PIX WiinPay gerado! ID: ${paymentId}`);
@@ -80,14 +80,13 @@ app.post('/gerar-pix', async (req, res) => {
     }
 });
 
-// VERIFICAR STATUS REAL NA WIINPAY
+// VERIFICAR STATUS REAL NA WIINPAY (PRINCIPAL)
 app.get('/check-payment/:paymentId', async (req, res) => {
     try {
         const paymentId = req.params.paymentId;
         
-        console.log(`🔍 Verificando status real do pagamento: ${paymentId}`);
+        console.log(`🔍 Verificando status real: ${paymentId}`);
         
-        // Consultar status REAL na WiinPay
         const response = await axios({
             method: 'GET',
             url: `https://api.wiinpay.com.br/payment/list/${paymentId}`,
@@ -100,32 +99,28 @@ app.get('/check-payment/:paymentId', async (req, res) => {
 
         const paymentData = response.data;
         
-        console.log('📊 Dados do pagamento:', JSON.stringify(paymentData, null, 2));
+        console.log('📊 Dados do pagamento:', paymentData);
         
-        // Verificar status e valor
         const status = paymentData.status || paymentData.payment_status;
         const valorRecebido = parseFloat(paymentData.value || paymentData.amount).toFixed(2);
         
         let statusFinal = 'pending';
         
         if (status === 'paid' || status === 'approved' || status === 'completed') {
-            // VALIDAÇÃO DO VALOR FIXO
             if (valorRecebido === VALOR_FIXO) {
                 statusFinal = 'paid';
-                console.log(`✅ PAGAMENTO CONFIRMADO: ${paymentId} - Valor correto!`);
+                console.log(`✅ PAGAMENTO CONFIRMADO: ${paymentId}`);
             } else {
                 statusFinal = 'valor_incorreto';
                 console.log(`❌ VALOR INCORRETO: R$ ${valorRecebido}`);
             }
         }
         
-        // Atualizar status
         paymentStatus[paymentId] = {
             ...paymentStatus[paymentId],
             status: statusFinal,
             valorRecebido: valorRecebido,
-            lastChecked: new Date(),
-            rawStatusData: paymentData
+            lastChecked: new Date()
         };
 
         const updatedPayment = paymentStatus[paymentId];
@@ -136,29 +131,25 @@ app.get('/check-payment/:paymentId', async (req, res) => {
             status: updatedPayment.status,
             valorEsperado: VALOR_FIXO,
             valorRecebido: updatedPayment.valorRecebido,
-            statusWiinPay: status,
             message: updatedPayment.status === 'paid' ? '✅ Pagamento confirmado!' : 
                     updatedPayment.status === 'valor_incorreto' ? '❌ Valor incorreto' : 
                     '⏳ Aguardando pagamento...'
         });
 
     } catch (error) {
-        console.error('❌ Erro ao verificar pagamento:', error.response?.data || error.message);
+        console.error('❌ Erro ao verificar:', error.response?.data || error.message);
         
-        // Se der erro, retorna status atual do cache
         const payment = paymentStatus[req.params.paymentId];
-        
         res.json({ 
             success: false,
             paymentId: req.params.paymentId,
             status: payment?.status || 'error',
-            valorEsperado: VALOR_FIXO,
-            message: 'Erro ao verificar pagamento'
+            message: 'Erro ao verificar'
         });
     }
 });
 
-// Rota rápida para o frontend (usa cache)
+// Rota rápida para frontend
 app.get('/check-status/:paymentId', (req, res) => {
     const paymentId = req.params.paymentId;
     const payment = paymentStatus[paymentId];
@@ -178,14 +169,14 @@ app.get('/check-status/:paymentId', (req, res) => {
 // Health check
 app.get('/', (req, res) => {
     res.json({ 
-        message: 'Sistema WiinPay funcionando!',
+        message: 'WiinPay funcionando!',
         valorFixo: 'R$ 19,99',
-        observacao: 'Com verificação REAL de status'
+        webhook: 'https://webhook.site/20cbcf2d-6741-4af2-9e3d-1ea49894b6b0'
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor WiinPay rodando na porta ${PORT}`);
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
     console.log(`💰 VALOR FIXO: R$ 19,99`);
-    console.log(`✅ COM verificação real de status`);
+    console.log(`🔔 Webhook: https://webhook.site/20cbcf2d-6741-4af2-9e3d-1ea49894b6b0`);
 });
